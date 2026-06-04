@@ -1,0 +1,25 @@
+# Binaries & build output
+bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+
+# Test coverage
+coverage.txt
+
+# Dependencies (when vendored)
+vendor/
+
+# Local environment / secrets
+.env
+.env.local
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Editor / IDE
+.idea/
+.vscode/

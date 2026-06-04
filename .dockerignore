@@ -1,0 +1,28 @@
+# VCS
+.git
+.gitignore
+
+# Local environment / secrets
+.env
+.env.local
+*.log
+
+# Build artifacts & dependencies
+bin/
+dist/
+build/
+vendor/
+
+# Editor / tooling state
+.vscode/
+.idea/
+.claude/
+
+# Docs (keep README in the image context)
+*.md
+!README.md
+
+# Compose & Docker meta (not needed inside the build context)
+docker-compose.yml
+Dockerfile
+.dockerignore
