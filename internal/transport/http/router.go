@@ -15,6 +15,7 @@ import (
 type Deps struct {
 	Logger        *slog.Logger
 	HealthHandler *handler.HealthHandler
+	OffersHandler *handler.OffersHandler
 }
 
 // NewRouter wires middleware and routes into a single http.Handler.
@@ -31,6 +32,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		// Public routes (no authentication required).
 		r.Get("/ping", deps.HealthHandler.Ping)
+		r.Get("/offers", deps.OffersHandler.List)
 
 		// ── Protected routes ────────────────────────────────────────────
 		// When authentication is introduced, mount authenticated resources

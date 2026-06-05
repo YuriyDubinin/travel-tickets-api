@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -13,10 +14,12 @@ import (
 
 // Config is the root configuration object, grouped by concern.
 type Config struct {
-	App      App
-	HTTP     HTTP
-	Postgres Postgres
-	Log      Log
+	App       App
+	HTTP      HTTP
+	Postgres  Postgres
+	Log       Log
+	Aviasales Aviasales
+	Worker    Worker
 }
 
 // App holds general application settings.
@@ -57,6 +60,28 @@ type Log struct {
 	Level string
 }
 
+// Aviasales holds Travelpayouts (Aviasales Data API) integration settings.
+type Aviasales struct {
+	Token       string
+	Marker      string
+	BaseURL     string
+	Currency    string
+	HTTPTimeout time.Duration
+}
+
+// Worker holds background price-collector settings. When Enabled is false (or the
+// Aviasales token is empty), the worker is not started and the rest of the
+// service runs normally.
+type Worker struct {
+	Enabled      bool
+	Interval     time.Duration
+	Origin       string
+	Destinations []string
+	MonthsAhead  int
+	OneWay       bool
+	RequestDelay time.Duration
+}
+
 // Load reads configuration from environment variables, applying defaults where
 // appropriate. A .env file is loaded if present (its absence is not an error).
 // POSTGRES_USER and POSTGRES_PASSWORD are required and have no defaults.
@@ -82,6 +107,16 @@ func Load() (*Config, error) {
 		Log: Log{
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
+		Aviasales: Aviasales{
+			Token:    os.Getenv("AVIASALES_TOKEN"),
+			Marker:   os.Getenv("AVIASALES_MARKER"),
+			BaseURL:  getEnv("AVIASALES_BASE_URL", "https://api.travelpayouts.com"),
+			Currency: getEnv("AVIASALES_CURRENCY", "rub"),
+		},
+		Worker: Worker{
+			Origin:       getEnv("WORKER_ORIGIN", "OVB"),
+			Destinations: parseCSV("WORKER_DESTINATIONS", "AER,KRR,AAQ,MRV"),
+		},
 	}
 
 	var err error
@@ -100,6 +135,28 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.Postgres.MaxConns = int32(maxConns)
+
+	if cfg.Aviasales.HTTPTimeout, err = parseDuration("AVIASALES_HTTP_TIMEOUT", "30s"); err != nil {
+		return nil, err
+	}
+	if cfg.Worker.Interval, err = parseDuration("WORKER_INTERVAL", "5m"); err != nil {
+		return nil, err
+	}
+	if cfg.Worker.RequestDelay, err = parseDuration("WORKER_REQUEST_DELAY", "200ms"); err != nil {
+		return nil, err
+	}
+	if cfg.Worker.Enabled, err = parseBool("WORKER_ENABLED", true); err != nil {
+		return nil, err
+	}
+	if cfg.Worker.OneWay, err = parseBool("WORKER_ONE_WAY", true); err != nil {
+		return nil, err
+	}
+
+	monthsAhead, err := parseInt("WORKER_MONTHS_AHEAD", 3)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Worker.MonthsAhead = monthsAhead
 
 	if cfg.Postgres.User == "" || cfg.Postgres.Password == "" {
 		return nil, fmt.Errorf("config: POSTGRES_USER and POSTGRES_PASSWORD are required")
@@ -137,4 +194,31 @@ func parseInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("config: invalid integer for %s=%q: %w", key, raw, err)
 	}
 	return n, nil
+}
+
+// parseBool reads a boolean env var, falling back to a default when unset.
+func parseBool(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("config: invalid bool for %s=%q: %w", key, raw, err)
+	}
+	return b, nil
+}
+
+// parseCSV reads a comma-separated env var into a normalized (trimmed, uppercased,
+// non-empty) slice, falling back to a default raw string when unset.
+func parseCSV(key, fallback string) []string {
+	raw := getEnv(key, fallback)
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.ToUpper(strings.TrimSpace(p)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

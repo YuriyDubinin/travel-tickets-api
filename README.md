@@ -1,9 +1,14 @@
 # travel-tickets-api
 
-A clean-architecture HTTP API in Go (chi + pgx/PostgreSQL). This is the minimal
-working skeleton: configuration, logging, a PostgreSQL pool, migrations, HTTP
-middleware, and a single `GET /api/ping` health-check. Business logic (tickets,
-trips, etc.) is added on top of this foundation.
+A clean-architecture HTTP API in Go (chi + pgx/PostgreSQL): configuration,
+logging, a PostgreSQL pool, migrations, HTTP middleware, a `GET /api/ping`
+health-check, and a background worker that periodically collects flight prices
+from the Travelpayouts (Aviasales) Data API into PostgreSQL.
+
+Note on routes: there are currently no flights Novosibirsk (OVB) → Simferopol
+(SIP) — the only Crimean airport is closed. The worker therefore monitors the
+real "feeder" airports (Sochi/AER, Krasnodar/KRR, Anapa/AAQ, Mineralnye Vody/MRV);
+the final leg to Crimea is by ground transport.
 
 ## Configuration
 
@@ -19,6 +24,16 @@ through the host's published port `5432`, so `POSTGRES_HOST` is:
   run flag** (use this if you keep the run command exactly as-is).
 - `localhost` — only when running the API directly via `go run`.
 
+## Background price worker
+
+When `WORKER_ENABLED=true` and `AVIASALES_TOKEN` is set, a worker runs every
+`WORKER_INTERVAL` (default `5m`): it queries `aviasales/v3/prices_for_dates` for
+`WORKER_ORIGIN` → each of `WORKER_DESTINATIONS`, across the next
+`WORKER_MONTHS_AHEAD` months, and upserts the results into the `flight_offers`
+table. Empty routes (e.g. `OVB→SIP`) are logged and skipped, not treated as
+errors. Without a token the worker stays disabled and the rest of the service
+runs normally.
+
 ## Deploy: build → push → pull → run
 
 Image: `yuriydubinin100/travel-tickets-api:1.0.0`
@@ -27,7 +42,7 @@ Image: `yuriydubinin100/travel-tickets-api:1.0.0`
 
 ```sh
 docker login
-docker build --platform linux/amd64 -t yuriydubinin100/travel-tickets-api:1.0.0 .
+docker build --platform linux/amd64 -t yuriydubinin100/travel-tickets-api:1.1.0 .
 docker push yuriydubinin100/travel-tickets-api:1.0.0
 ```
 
@@ -71,9 +86,10 @@ docker logs --tail 20 travel-tickets-api
 
 Base URL (local run): `http://localhost:18080`
 
-| Method | Path        | Description                                          |
-|--------|-------------|------------------------------------------------------|
-| GET    | `/api/ping` | Health-check of the service. Returns 200 OK if the process is alive. |
+| Method | Path          | Description                                                                          |
+|--------|---------------|--------------------------------------------------------------------------------------|
+| GET    | `/api/ping`   | Health-check of the service. Returns 200 OK if the process is alive.                  |
+| GET    | `/api/offers` | Collected flight offers. Optional query: `origin`, `destination`, `limit`. Example: `/api/offers?origin=OVB&destination=AER`. |
 
 ## Run locally (go run)
 

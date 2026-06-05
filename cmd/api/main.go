@@ -8,12 +8,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/example/travel-tickets-api/internal/config"
+	"github.com/example/travel-tickets-api/internal/integration/travelpayouts"
 	"github.com/example/travel-tickets-api/internal/repository/postgres"
+	"github.com/example/travel-tickets-api/internal/service"
 	transporthttp "github.com/example/travel-tickets-api/internal/transport/http"
 	"github.com/example/travel-tickets-api/internal/transport/http/handler"
+	"github.com/example/travel-tickets-api/internal/worker"
 	"github.com/example/travel-tickets-api/pkg/logger"
 )
 
@@ -46,13 +50,53 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Repositories.
+	offerRepo := postgres.NewFlightOfferRepository(pool)
+
+	// Background price-collector worker (optional). It starts only when enabled
+	// and an Aviasales token is configured; otherwise the service runs without it.
+	var wg sync.WaitGroup
+	if cfg.Worker.Enabled && cfg.Aviasales.Token != "" {
+		tpClient := travelpayouts.NewClient(travelpayouts.Config{
+			BaseURL:  cfg.Aviasales.BaseURL,
+			Token:    cfg.Aviasales.Token,
+			Marker:   cfg.Aviasales.Marker,
+			Currency: cfg.Aviasales.Currency,
+			Timeout:  cfg.Aviasales.HTTPTimeout,
+		})
+		collector := service.NewCollector(tpClient, offerRepo, log, service.CollectorConfig{
+			Origin:       cfg.Worker.Origin,
+			Destinations: cfg.Worker.Destinations,
+			MonthsAhead:  cfg.Worker.MonthsAhead,
+			OneWay:       cfg.Worker.OneWay,
+			RequestDelay: cfg.Worker.RequestDelay,
+		})
+		w := worker.NewWorker(collector, cfg.Worker.Interval, log)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w.Run(ctx)
+		}()
+		log.Info("price worker enabled",
+			"origin", cfg.Worker.Origin,
+			"destinations", cfg.Worker.Destinations,
+			"interval", cfg.Worker.Interval.String())
+	} else {
+		log.Warn("price worker disabled",
+			"worker_enabled", cfg.Worker.Enabled,
+			"has_token", cfg.Aviasales.Token != "")
+	}
+
 	// Handlers.
 	healthHandler := handler.NewHealthHandler()
+	offersHandler := handler.NewOffersHandler(service.NewOfferService(offerRepo), log)
 
 	// Router with all dependencies injected.
 	router := transporthttp.NewRouter(transporthttp.Deps{
 		Logger:        log,
 		HealthHandler: healthHandler,
+		OffersHandler: offersHandler,
 	})
 
 	// HTTP server.
@@ -70,6 +114,9 @@ func main() {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
+
+	// Wait for the worker (if any) to finish its graceful stop.
+	wg.Wait()
 
 	log.Info("service stopped")
 }
