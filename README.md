@@ -42,7 +42,7 @@ Image: `yuriydubinin100/travel-tickets-api:1.0.0`
 
 ```sh
 docker login
-docker build --platform linux/amd64 -t yuriydubinin100/travel-tickets-api:1.1.0 .
+docker build --platform linux/amd64 -t yuriydubinin100/travel-tickets-api:1.0.0 .
 docker push yuriydubinin100/travel-tickets-api:1.0.0
 ```
 
