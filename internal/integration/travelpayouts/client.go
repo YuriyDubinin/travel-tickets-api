@@ -22,6 +22,9 @@ const (
 	defaultTimeout     = 30 * time.Second
 	pricesForDatesPath = "/aviasales/v3/prices_for_dates"
 	maxResponseBytes   = 8 << 20 // 8 MiB safety cap on the response body
+	// aviasalesWebBase is prepended to the API's relative search links so the
+	// link stored in the DB is a complete, clickable URL.
+	aviasalesWebBase = "https://www.aviasales.ru"
 )
 
 // Config configures the client. Kept local so this package does not depend on
@@ -169,6 +172,7 @@ func (c *Client) PricesForDates(ctx context.Context, params Params) ([]domain.Fl
 // transform maps API entries into domain offers, skipping entries with an
 // unparseable departure timestamp.
 func transform(entries []priceEntry, currency string, oneWay bool, collectedAt time.Time) []domain.FlightOffer {
+	currency = strings.ToUpper(currency)
 	offers := make([]domain.FlightOffer, 0, len(entries))
 	for _, e := range entries {
 		departureAt, ok := parseTime(e.DepartureAt)
@@ -195,7 +199,7 @@ func transform(entries []priceEntry, currency string, oneWay bool, collectedAt t
 			FlightNumber:       e.FlightNumber,
 			Transfers:          e.Transfers,
 			Duration:           e.Duration,
-			Link:               e.Link,
+			Link:               absoluteLink(e.Link),
 			OneWay:             oneWay,
 			Source:             "travelpayouts",
 			CollectedAt:        collectedAt,
@@ -224,4 +228,16 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// absoluteLink turns the API's relative search link into a complete aviasales.ru
+// URL. An already-absolute link is returned unchanged; an empty link stays empty.
+func absoluteLink(link string) string {
+	if link == "" {
+		return ""
+	}
+	if strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://") {
+		return link
+	}
+	return aviasalesWebBase + link
 }
