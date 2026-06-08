@@ -13,6 +13,7 @@ import "time"
 // FlightOffer is a single cached flight price for a route on a given departure
 // date, as surfaced by the Aviasales Data API.
 type FlightOffer struct {
+	ID                 int64 // DB primary key; 0 for offers not yet read from storage
 	Origin             string
 	Destination        string
 	OriginAirport      string

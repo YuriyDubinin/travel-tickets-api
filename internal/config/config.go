@@ -81,6 +81,10 @@ type Worker struct {
 	MonthsAhead  int
 	OneWay       bool
 	RequestDelay time.Duration
+
+	// Publishing of collected offers to Telegram, run after each collection pass.
+	PublishBatchSize int           // max offers published per cycle
+	PublishDelay     time.Duration // pause between individual messages (anti-flood)
 }
 
 // Telegram holds settings for the Telegram bot that posts to a channel. When
@@ -177,6 +181,16 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.Worker.MonthsAhead = monthsAhead
+
+	publishBatch, err := parseInt("WORKER_PUBLISH_BATCH", 10)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Worker.PublishBatchSize = publishBatch
+
+	if cfg.Worker.PublishDelay, err = parseDuration("WORKER_PUBLISH_DELAY", "3s"); err != nil {
+		return nil, err
+	}
 
 	if cfg.Telegram.HTTPTimeout, err = parseDuration("TELEGRAM_HTTP_TIMEOUT", "10s"); err != nil {
 		return nil, err

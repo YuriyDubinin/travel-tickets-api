@@ -11,21 +11,23 @@ import (
 	"github.com/example/travel-tickets-api/internal/service"
 )
 
-// Worker periodically runs the price collector.
+// Worker periodically collects flight prices and then publishes new offers.
 type Worker struct {
 	collector *service.Collector
+	publisher *service.Publisher // may be nil when Telegram is disabled
 	interval  time.Duration
 	log       *slog.Logger
 }
 
-// NewWorker constructs a Worker.
-func NewWorker(collector *service.Collector, interval time.Duration, log *slog.Logger) *Worker {
-	return &Worker{collector: collector, interval: interval, log: log}
+// NewWorker constructs a Worker. publisher may be nil, in which case the worker
+// only collects (no publishing).
+func NewWorker(collector *service.Collector, publisher *service.Publisher, interval time.Duration, log *slog.Logger) *Worker {
+	return &Worker{collector: collector, publisher: publisher, interval: interval, log: log}
 }
 
-// Run executes one collection cycle immediately, then every interval, until ctx
-// is cancelled. It never returns: each cycle is isolated, and a failure or panic
-// is logged without stopping the worker.
+// Run executes one cycle immediately, then every interval, until ctx is
+// cancelled. It never returns: each cycle is isolated, and a failure or panic is
+// logged without stopping the worker.
 func (w *Worker) Run(ctx context.Context) {
 	w.log.Info("worker started", "interval", w.interval.String())
 
@@ -46,8 +48,8 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// runCycle runs one collection cycle, recovering from panics so a single bad
-// cycle cannot bring the worker down.
+// runCycle collects offers and then publishes pending ones, recovering from
+// panics so a single bad cycle cannot bring the worker down.
 func (w *Worker) runCycle(ctx context.Context) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -55,25 +57,40 @@ func (w *Worker) runCycle(ctx context.Context) {
 		}
 	}()
 
+	// 1. Collect prices into the database.
 	start := time.Now()
-	res, err := w.collector.CollectOnce(ctx)
-	durMs := time.Since(start).Milliseconds()
+	cres, cerr := w.collector.CollectOnce(ctx)
+	w.logResult("collect cycle finished", time.Since(start), cerr,
+		"routes_ok", cres.RoutesOK,
+		"routes_empty", cres.RoutesEmpty,
+		"routes_failed", cres.RoutesFailed,
+		"fetched", cres.Fetched,
+		"upserted", cres.Upserted,
+	)
 
-	attrs := []any{
-		"duration_ms", durMs,
-		"routes_ok", res.RoutesOK,
-		"routes_empty", res.RoutesEmpty,
-		"routes_failed", res.RoutesFailed,
-		"fetched", res.Fetched,
-		"upserted", res.Upserted,
+	// 2. Publish not-yet-published offers to Telegram.
+	if w.publisher == nil || ctx.Err() != nil {
+		return
 	}
+	start = time.Now()
+	pres, perr := w.publisher.PublishPending(ctx)
+	w.logResult("publish cycle finished", time.Since(start), perr,
+		"fetched", pres.Fetched,
+		"published", pres.Published,
+		"failed", pres.Failed,
+	)
+}
 
+// logResult logs a cycle result, treating context cancellation as a normal stop
+// rather than an error.
+func (w *Worker) logResult(msg string, dur time.Duration, err error, attrs ...any) {
+	attrs = append([]any{"duration_ms", dur.Milliseconds()}, attrs...)
 	switch {
 	case err == nil:
-		w.log.Info("worker cycle finished", attrs...)
+		w.log.Info(msg, attrs...)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		// Shutting down — not a real failure.
 	default:
-		w.log.Error("worker cycle finished with errors", append(attrs, "error", err)...)
+		w.log.Error(msg+" with errors", append(attrs, "error", err)...)
 	}
 }

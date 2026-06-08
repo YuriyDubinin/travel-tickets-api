@@ -59,6 +59,8 @@ the cheapest known offer for a route on a given departure date.
 | `one_way`             | `true` = one-way, `false` = round-trip.                               |
 | `source`              | Data source (`travelpayouts`).                                        |
 | `collected_at`        | When this row was last written/updated (last successful parse).       |
+| `published`           | Whether the offer was posted to Telegram (`NULL`/`false` = not yet).   |
+| `published_at`        | When it was posted to Telegram (`NULL` until published).              |
 
 Deduplication: the unique key **`(origin, destination, departure_date, one_way)`**
 identifies "the same ticket". On each parse an existing row is updated in place
@@ -74,7 +76,12 @@ notifier is disabled — and the rest of the service runs normally — when
 `TELEGRAM_ENABLED=false` or the token / channel is empty. At startup the bot is
 validated with `getMe` (nothing is posted).
 
-Post a message to the channel via the scaffold endpoint:
+After each collection cycle the worker automatically posts **newly-collected**
+offers to the channel — one message per offer, up to `WORKER_PUBLISH_BATCH` per
+cycle with `WORKER_PUBLISH_DELAY` between messages — formatting each as a tidy
+card with a clickable link, and marks them `published` so they are never re-sent.
+
+You can also post an arbitrary message via the scaffold endpoint:
 
 ```sh
 curl -X POST http://localhost:18080/api/notify \

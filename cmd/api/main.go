@@ -54,41 +54,6 @@ func main() {
 	// Repositories.
 	offerRepo := postgres.NewFlightOfferRepository(pool)
 
-	// Background price-collector worker (optional). It starts only when enabled
-	// and an Aviasales token is configured; otherwise the service runs without it.
-	var wg sync.WaitGroup
-	if cfg.Worker.Enabled && cfg.Aviasales.Token != "" {
-		tpClient := travelpayouts.NewClient(travelpayouts.Config{
-			BaseURL:  cfg.Aviasales.BaseURL,
-			Token:    cfg.Aviasales.Token,
-			Marker:   cfg.Aviasales.Marker,
-			Currency: cfg.Aviasales.Currency,
-			Timeout:  cfg.Aviasales.HTTPTimeout,
-		})
-		collector := service.NewCollector(tpClient, offerRepo, log, service.CollectorConfig{
-			Origin:       cfg.Worker.Origin,
-			Destinations: cfg.Worker.Destinations,
-			MonthsAhead:  cfg.Worker.MonthsAhead,
-			OneWay:       cfg.Worker.OneWay,
-			RequestDelay: cfg.Worker.RequestDelay,
-		})
-		w := worker.NewWorker(collector, cfg.Worker.Interval, log)
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			w.Run(ctx)
-		}()
-		log.Info("price worker enabled",
-			"origin", cfg.Worker.Origin,
-			"destinations", cfg.Worker.Destinations,
-			"interval", cfg.Worker.Interval.String())
-	} else {
-		log.Warn("price worker disabled",
-			"worker_enabled", cfg.Worker.Enabled,
-			"has_token", cfg.Aviasales.Token != "")
-	}
-
 	// Telegram notifier (optional). Posts to a channel; inert if not configured.
 	tgEnabled := cfg.Telegram.Enabled && cfg.Telegram.BotToken != "" && cfg.Telegram.ChannelID != ""
 	tgClient := telegram.NewClient(telegram.Config{
@@ -112,6 +77,51 @@ func main() {
 			"telegram_enabled", cfg.Telegram.Enabled,
 			"has_token", cfg.Telegram.BotToken != "",
 			"has_channel", cfg.Telegram.ChannelID != "")
+	}
+
+	// Background worker (optional): collects prices, then publishes new offers to
+	// Telegram. It starts only when enabled and an Aviasales token is configured;
+	// otherwise the service runs without it.
+	var wg sync.WaitGroup
+	if cfg.Worker.Enabled && cfg.Aviasales.Token != "" {
+		tpClient := travelpayouts.NewClient(travelpayouts.Config{
+			BaseURL:  cfg.Aviasales.BaseURL,
+			Token:    cfg.Aviasales.Token,
+			Marker:   cfg.Aviasales.Marker,
+			Currency: cfg.Aviasales.Currency,
+			Timeout:  cfg.Aviasales.HTTPTimeout,
+		})
+		collector := service.NewCollector(tpClient, offerRepo, log, service.CollectorConfig{
+			Origin:       cfg.Worker.Origin,
+			Destinations: cfg.Worker.Destinations,
+			MonthsAhead:  cfg.Worker.MonthsAhead,
+			OneWay:       cfg.Worker.OneWay,
+			RequestDelay: cfg.Worker.RequestDelay,
+		})
+
+		// Publisher posts collected offers to Telegram (only when notifier is enabled).
+		var publisher *service.Publisher
+		if notifier.Enabled() {
+			publisher = service.NewPublisher(offerRepo, notifier, log,
+				cfg.Worker.PublishBatchSize, cfg.Worker.PublishDelay)
+		}
+
+		w := worker.NewWorker(collector, publisher, cfg.Worker.Interval, log)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w.Run(ctx)
+		}()
+		log.Info("price worker enabled",
+			"origin", cfg.Worker.Origin,
+			"destinations", cfg.Worker.Destinations,
+			"interval", cfg.Worker.Interval.String(),
+			"publishing", notifier.Enabled())
+	} else {
+		log.Warn("price worker disabled",
+			"worker_enabled", cfg.Worker.Enabled,
+			"has_token", cfg.Aviasales.Token != "")
 	}
 
 	// Handlers.

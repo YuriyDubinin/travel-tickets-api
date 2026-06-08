@@ -24,10 +24,14 @@ const upsertFlightOfferSQL = `
 INSERT INTO flight_offers (
 	origin, destination, origin_airport, destination_airport,
 	departure_at, departure_date, return_at, price, currency,
-	airline, flight_number, transfers, duration, link, one_way, source, collected_at
+	airline, flight_number, transfers, duration, link, one_way, source, collected_at,
+	published
 ) VALUES (
-	$1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+	$1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+	false
 )
+-- A new offer starts unpublished. On conflict we deliberately leave published /
+-- published_at untouched, so an already-published offer is never re-published.
 ON CONFLICT (origin, destination, departure_date, one_way) DO UPDATE SET
 	origin_airport      = EXCLUDED.origin_airport,
 	destination_airport = EXCLUDED.destination_airport,
@@ -128,4 +132,63 @@ func (r *FlightOfferRepository) List(ctx context.Context, filter domain.OfferFil
 		return nil, fmt.Errorf("postgres: iterate flight offers: %w", err)
 	}
 	return offers, nil
+}
+
+const listUnpublishedSQL = `
+SELECT id, origin, destination,
+       COALESCE(origin_airport, ''), COALESCE(destination_airport, ''),
+       departure_at, to_char(departure_date, 'YYYY-MM-DD'), return_at,
+       price, currency,
+       COALESCE(airline, ''), COALESCE(flight_number, ''),
+       transfers, COALESCE(duration, 0), COALESCE(link, ''),
+       one_way, source, collected_at
+FROM flight_offers
+WHERE published IS NOT TRUE
+ORDER BY collected_at, price
+LIMIT $1
+`
+
+// ListUnpublished returns offers not yet published (published is false or NULL),
+// oldest first. A non-positive limit falls back to the default.
+func (r *FlightOfferRepository) ListUnpublished(ctx context.Context, limit int) ([]domain.FlightOffer, error) {
+	if limit <= 0 {
+		limit = defaultOfferLimit
+	}
+	if limit > maxOfferLimit {
+		limit = maxOfferLimit
+	}
+
+	rows, err := r.pool.Query(ctx, listUnpublishedSQL, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list unpublished offers: %w", err)
+	}
+	defer rows.Close()
+
+	offers := make([]domain.FlightOffer, 0)
+	for rows.Next() {
+		var o domain.FlightOffer
+		if err := rows.Scan(
+			&o.ID, &o.Origin, &o.Destination, &o.OriginAirport, &o.DestinationAirport,
+			&o.DepartureAt, &o.DepartureDate, &o.ReturnAt, &o.Price, &o.Currency,
+			&o.Airline, &o.FlightNumber, &o.Transfers, &o.Duration, &o.Link,
+			&o.OneWay, &o.Source, &o.CollectedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres: scan unpublished offer: %w", err)
+		}
+		offers = append(offers, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: iterate unpublished offers: %w", err)
+	}
+	return offers, nil
+}
+
+// MarkPublished marks an offer as published and stamps the current time.
+func (r *FlightOfferRepository) MarkPublished(ctx context.Context, id int64) error {
+	if _, err := r.pool.Exec(ctx,
+		`UPDATE flight_offers SET published = true, published_at = now() WHERE id = $1`, id,
+	); err != nil {
+		return fmt.Errorf("postgres: mark offer %d published: %w", id, err)
+	}
+	return nil
 }
