@@ -69,20 +69,24 @@ type CollectResult struct {
 	Upserted     int64
 }
 
-// CollectOnce runs one full collection pass over destinations × upcoming months.
-// A failure on one route does not abort the cycle: errors are accumulated and
-// returned joined. An empty route result is expected (e.g. OVB→SIP) and is not
-// an error.
+// collectionWindowDays is the size of the departure-date window the collector
+// scans on each pass: from today through today+collectionWindowDays (inclusive).
+const collectionWindowDays = 14
+
+// CollectOnce runs one full collection pass over destinations × the upcoming
+// departure dates (today through today+collectionWindowDays). A failure on one
+// route does not abort the cycle: errors are accumulated and returned joined. An
+// empty result for a date is expected (e.g. OVB→SIP) and is not an error.
 func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 	var (
 		res  CollectResult
 		errs []error
 	)
 
-	months := upcomingMonths(time.Now(), c.monthsAhead)
+	dates := upcomingDates(time.Now(), collectionWindowDays)
 
 	for _, dest := range c.destinations {
-		for _, month := range months {
+		for _, date := range dates {
 			// Politeness delay between requests (ctx-aware).
 			if err := sleep(ctx, c.reqDelay); err != nil {
 				return res, err
@@ -91,31 +95,31 @@ func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 			offers, err := c.provider.PricesForDates(ctx, travelpayouts.Params{
 				Origin:      c.origin,
 				Destination: dest,
-				DepartureAt: month,
+				DepartureAt: date,
 				OneWay:      c.oneWay,
 				Limit:       100,
 			})
 			if err != nil {
 				res.RoutesFailed++
-				errs = append(errs, fmt.Errorf("%s-%s %s: %w", c.origin, dest, month, err))
+				errs = append(errs, fmt.Errorf("%s-%s %s: %w", c.origin, dest, date, err))
 				c.log.Error("collect route failed",
-					"origin", c.origin, "destination", dest, "month", month, "error", err)
+					"origin", c.origin, "destination", dest, "date", date, "error", err)
 				continue
 			}
 
 			if len(offers) == 0 {
 				res.RoutesEmpty++
 				c.log.Info("collect route empty (likely no flights)",
-					"origin", c.origin, "destination", dest, "month", month)
+					"origin", c.origin, "destination", dest, "date", date)
 				continue
 			}
 
 			written, err := c.store.UpsertMany(ctx, offers)
 			if err != nil {
 				res.RoutesFailed++
-				errs = append(errs, fmt.Errorf("%s-%s %s upsert: %w", c.origin, dest, month, err))
+				errs = append(errs, fmt.Errorf("%s-%s %s upsert: %w", c.origin, dest, date, err))
 				c.log.Error("collect route upsert failed",
-					"origin", c.origin, "destination", dest, "month", month, "error", err)
+					"origin", c.origin, "destination", dest, "date", date, "error", err)
 				continue
 			}
 
@@ -123,7 +127,7 @@ func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 			res.Fetched += len(offers)
 			res.Upserted += written
 			c.log.Info("collect route ok",
-				"origin", c.origin, "destination", dest, "month", month,
+				"origin", c.origin, "destination", dest, "date", date,
 				"fetched", len(offers), "written", written)
 		}
 	}
@@ -131,18 +135,19 @@ func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 	return res, errors.Join(errs...)
 }
 
-// upcomingMonths returns "YYYY-MM" for the current month and the next n-1 months.
-func upcomingMonths(now time.Time, n int) []string {
-	if n < 1 {
-		n = 1
+// upcomingDates returns "YYYY-MM-DD" for each day from today through today+days
+// (inclusive) — the departure-date window the collector queries.
+func upcomingDates(now time.Time, days int) []string {
+	if days < 0 {
+		days = 0
 	}
-	y, m, _ := now.Date()
-	base := time.Date(y, m, 1, 0, 0, 0, 0, time.UTC)
-	months := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		months = append(months, base.AddDate(0, i, 0).Format("2006-01"))
+	y, m, d := now.Date()
+	base := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	dates := make([]string, 0, days+1)
+	for i := 0; i <= days; i++ {
+		dates = append(dates, base.AddDate(0, 0, i).Format("2006-01-02"))
 	}
-	return months
+	return dates
 }
 
 // sleep waits for d, returning early with ctx.Err() if ctx is cancelled.

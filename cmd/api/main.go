@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/example/travel-tickets-api/internal/config"
+	"github.com/example/travel-tickets-api/internal/integration/telegram"
 	"github.com/example/travel-tickets-api/internal/integration/travelpayouts"
 	"github.com/example/travel-tickets-api/internal/repository/postgres"
 	"github.com/example/travel-tickets-api/internal/service"
@@ -88,15 +89,42 @@ func main() {
 			"has_token", cfg.Aviasales.Token != "")
 	}
 
+	// Telegram notifier (optional). Posts to a channel; inert if not configured.
+	tgEnabled := cfg.Telegram.Enabled && cfg.Telegram.BotToken != "" && cfg.Telegram.ChannelID != ""
+	tgClient := telegram.NewClient(telegram.Config{
+		BaseURL:               cfg.Telegram.BaseURL,
+		BotToken:              cfg.Telegram.BotToken,
+		ChannelID:             cfg.Telegram.ChannelID,
+		ParseMode:             cfg.Telegram.ParseMode,
+		DisableWebPagePreview: cfg.Telegram.DisableWebPagePreview,
+		Timeout:               cfg.Telegram.HTTPTimeout,
+	})
+	notifier := service.NewNotifier(tgClient, tgEnabled, log)
+	if tgEnabled {
+		// Validate the token without posting (best-effort; bounded by the client timeout).
+		if info, err := tgClient.GetMe(ctx); err != nil {
+			log.Warn("telegram bot validation failed (notifier will still try on use)", "error", err)
+		} else {
+			log.Info("telegram bot connected", "username", info.Username, "channel", cfg.Telegram.ChannelID)
+		}
+	} else {
+		log.Warn("telegram notifier disabled",
+			"telegram_enabled", cfg.Telegram.Enabled,
+			"has_token", cfg.Telegram.BotToken != "",
+			"has_channel", cfg.Telegram.ChannelID != "")
+	}
+
 	// Handlers.
 	healthHandler := handler.NewHealthHandler()
 	offersHandler := handler.NewOffersHandler(service.NewOfferService(offerRepo), log)
+	notifyHandler := handler.NewNotifyHandler(notifier, log)
 
 	// Router with all dependencies injected.
 	router := transporthttp.NewRouter(transporthttp.Deps{
 		Logger:        log,
 		HealthHandler: healthHandler,
 		OffersHandler: offersHandler,
+		NotifyHandler: notifyHandler,
 	})
 
 	// HTTP server.

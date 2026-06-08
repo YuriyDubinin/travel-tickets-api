@@ -20,6 +20,7 @@ type Config struct {
 	Log       Log
 	Aviasales Aviasales
 	Worker    Worker
+	Telegram  Telegram
 }
 
 // App holds general application settings.
@@ -82,6 +83,19 @@ type Worker struct {
 	RequestDelay time.Duration
 }
 
+// Telegram holds settings for the Telegram bot that posts to a channel. When
+// Enabled is false (or the bot token / channel ID is empty), the notifier is
+// inert and the rest of the service runs normally.
+type Telegram struct {
+	Enabled               bool
+	BotToken              string
+	ChannelID             string
+	ParseMode             string
+	DisableWebPagePreview bool
+	BaseURL               string
+	HTTPTimeout           time.Duration
+}
+
 // Load reads configuration from environment variables, applying defaults where
 // appropriate. A .env file is loaded if present (its absence is not an error).
 // POSTGRES_USER and POSTGRES_PASSWORD are required and have no defaults.
@@ -116,6 +130,12 @@ func Load() (*Config, error) {
 		Worker: Worker{
 			Origin:       getEnv("WORKER_ORIGIN", "OVB"),
 			Destinations: parseCSV("WORKER_DESTINATIONS", "AER,KRR,AAQ,MRV"),
+		},
+		Telegram: Telegram{
+			BotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+			ChannelID: os.Getenv("TELEGRAM_CHANNEL_ID"),
+			ParseMode: getEnv("TELEGRAM_PARSE_MODE", "HTML"),
+			BaseURL:   getEnv("TELEGRAM_BASE_URL", "https://api.telegram.org"),
 		},
 	}
 
@@ -157,6 +177,16 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.Worker.MonthsAhead = monthsAhead
+
+	if cfg.Telegram.HTTPTimeout, err = parseDuration("TELEGRAM_HTTP_TIMEOUT", "10s"); err != nil {
+		return nil, err
+	}
+	if cfg.Telegram.Enabled, err = parseBool("TELEGRAM_ENABLED", true); err != nil {
+		return nil, err
+	}
+	if cfg.Telegram.DisableWebPagePreview, err = parseBool("TELEGRAM_DISABLE_WEB_PAGE_PREVIEW", true); err != nil {
+		return nil, err
+	}
 
 	if cfg.Postgres.User == "" || cfg.Postgres.Password == "" {
 		return nil, fmt.Errorf("config: POSTGRES_USER and POSTGRES_PASSWORD are required")

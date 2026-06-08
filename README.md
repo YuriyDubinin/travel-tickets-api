@@ -55,7 +55,7 @@ the cheapest known offer for a route on a given departure date.
 | `flight_number`       | Flight number.                                                        |
 | `transfers`           | Number of stops (`0` = direct).                                       |
 | `duration`            | Trip duration, in minutes.                                            |
-| `link`                | Relative Aviasales link (served as an absolute URL by `/api/offers`). |
+| `link`                | Full clickable Aviasales URL (absolute, e.g. `https://www.aviasales.ru/…`). |
 | `one_way`             | `true` = one-way, `false` = round-trip.                               |
 | `source`              | Data source (`travelpayouts`).                                        |
 | `collected_at`        | When this row was last written/updated (last successful parse).       |
@@ -64,6 +64,27 @@ Deduplication: the unique key **`(origin, destination, departure_date, one_way)`
 identifies "the same ticket". On each parse an existing row is updated in place
 (price, airline, flight_number, link, collected_at refreshed) rather than
 duplicated.
+
+## Telegram bot
+
+The service can post messages to a Telegram channel. Configure it in `.env`:
+`TELEGRAM_BOT_TOKEN` (from @BotFather), `TELEGRAM_CHANNEL_ID` (`@channel` or a
+numeric `-100...` id), and optional `TELEGRAM_PARSE_MODE` (default `HTML`). The
+notifier is disabled — and the rest of the service runs normally — when
+`TELEGRAM_ENABLED=false` or the token / channel is empty. At startup the bot is
+validated with `getMe` (nothing is posted).
+
+Post a message to the channel via the scaffold endpoint:
+
+```sh
+curl -X POST http://localhost:18080/api/notify \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"<b>Hello</b> from travel-tickets-api"}'
+# {"status":"sent"}
+```
+
+> `/api/notify` has no authentication yet — add auth before exposing it publicly,
+> since anyone who can reach it can post to the channel.
 
 ## Deploy: build → push → pull → run
 
@@ -121,6 +142,7 @@ Base URL (local run): `http://localhost:18080`
 |--------|---------------|--------------------------------------------------------------------------------------|
 | GET    | `/api/ping`   | Health-check of the service. Returns 200 OK if the process is alive.                  |
 | GET    | `/api/offers` | Collected flight offers. Optional query: `origin`, `destination`, `limit`. Example: `/api/offers?origin=OVB&destination=AER`. |
+| POST   | `/api/notify` | Post a message to the Telegram channel. Body: `{"text":"..."}`. Returns 503 if the bot is not configured. |
 
 ## Run locally (go run)
 
