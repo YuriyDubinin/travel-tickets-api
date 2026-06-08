@@ -95,6 +95,15 @@ func (p *Publisher) PublishPending(ctx context.Context) (PublishResult, error) {
 	return res, errors.Join(errs...)
 }
 
+// Announce posts a one-time intro message describing what the bot publishes:
+// the routes, the departure-date window, and how often prices are checked.
+func (p *Publisher) Announce(ctx context.Context, origin string, destinations []string, interval time.Duration) error {
+	if p.notifier == nil || !p.notifier.Enabled() {
+		return nil
+	}
+	return p.notifier.Notify(ctx, formatAnnounceMessage(origin, destinations, interval))
+}
+
 // --- message formatting ---
 
 // airportNames maps IATA codes to human-readable city names for nicer messages.
@@ -193,4 +202,50 @@ func groupThousands(n int64) string {
 		out = "-" + out
 	}
 	return out
+}
+
+// formatAnnounceMessage renders the one-time startup intro for the channel.
+func formatAnnounceMessage(origin string, destinations []string, interval time.Duration) string {
+	names := make([]string, 0, len(destinations))
+	for _, d := range destinations {
+		names = append(names, airportName(d))
+	}
+
+	var b strings.Builder
+	b.WriteString("🔥 <b>Самые выгодные авиабилеты</b>\n\n")
+	fmt.Fprintf(&b, "Следим за лучшими ценами по направлениям:\n✈️ <b>%s → %s</b>\n\n",
+		html.EscapeString(airportName(origin)), html.EscapeString(strings.Join(names, ", ")))
+	fmt.Fprintf(&b, "🗓 Вылеты в ближайшие <b>%d %s</b>\n",
+		collectionWindowDays, plural(collectionWindowDays, "день", "дня", "дней"))
+	fmt.Fprintf(&b, "🔄 Обновляем раз в <b>%s</b>", html.EscapeString(humanizeInterval(interval)))
+	return b.String()
+}
+
+// humanizeInterval renders a duration as a short Russian phrase (e.g. "5 минут").
+func humanizeInterval(d time.Duration) string {
+	switch {
+	case d >= time.Hour && d%time.Hour == 0:
+		h := int(d / time.Hour)
+		return fmt.Sprintf("%d %s", h, plural(h, "час", "часа", "часов"))
+	case d >= time.Minute && d%time.Minute == 0:
+		m := int(d / time.Minute)
+		return fmt.Sprintf("%d %s", m, plural(m, "минуту", "минуты", "минут"))
+	default:
+		return d.String()
+	}
+}
+
+// plural picks the Russian plural form for n (one / few / many).
+func plural(n int, one, few, many string) string {
+	if mod100 := n % 100; mod100 >= 11 && mod100 <= 14 {
+		return many
+	}
+	switch n % 10 {
+	case 1:
+		return one
+	case 2, 3, 4:
+		return few
+	default:
+		return many
+	}
 }
