@@ -34,6 +34,37 @@ table. Empty routes (e.g. `OVB→SIP`) are logged and skipped, not treated as
 errors. Without a token the worker stays disabled and the rest of the service
 runs normally.
 
+## Data model: `flight_offers`
+
+The worker upserts collected offers into the `flight_offers` table. One row =
+the cheapest known offer for a route on a given departure date.
+
+| Column                | Meaning                                                               |
+|-----------------------|-----------------------------------------------------------------------|
+| `id`                  | Auto-increment primary key (internal row id).                         |
+| `origin`              | Departure city / IATA code (e.g. `OVB`).                              |
+| `destination`         | Destination city / IATA code (e.g. `AER`).                            |
+| `origin_airport`      | Specific departure airport (IATA).                                    |
+| `destination_airport` | Specific arrival airport (IATA).                                      |
+| `departure_at`        | Full departure date & time (with timezone).                           |
+| `departure_date`      | Departure date only — part of the dedup key.                          |
+| `return_at`           | Return date & time; empty for one-way tickets.                        |
+| `price`               | Ticket price (integer).                                               |
+| `currency`            | Price currency (e.g. `rub`).                                          |
+| `airline`             | Airline IATA code (e.g. `S7`).                                        |
+| `flight_number`       | Flight number.                                                        |
+| `transfers`           | Number of stops (`0` = direct).                                       |
+| `duration`            | Trip duration, in minutes.                                            |
+| `link`                | Relative Aviasales link (served as an absolute URL by `/api/offers`). |
+| `one_way`             | `true` = one-way, `false` = round-trip.                               |
+| `source`              | Data source (`travelpayouts`).                                        |
+| `collected_at`        | When this row was last written/updated (last successful parse).       |
+
+Deduplication: the unique key **`(origin, destination, departure_date, one_way)`**
+identifies "the same ticket". On each parse an existing row is updated in place
+(price, airline, flight_number, link, collected_at refreshed) rather than
+duplicated.
+
 ## Deploy: build → push → pull → run
 
 Image: `yuriydubinin100/travel-tickets-api:1.0.0`
