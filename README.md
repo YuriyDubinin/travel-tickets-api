@@ -1,14 +1,18 @@
 # travel-tickets-api
 
-```sh
-docker login
+```
 docker build --platform linux/amd64 -t yuriydubinin100/travel-tickets-api:1.0.0 .
+```
+
+```
 docker push yuriydubinin100/travel-tickets-api:1.0.0
 ```
 
-```sh
+```
 docker pull yuriydubinin100/travel-tickets-api:1.0.0
+```
 
+```
 docker run -d \
   --name travel-tickets-api \
   --env-file .env \
