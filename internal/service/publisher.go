@@ -48,48 +48,69 @@ type PublishResult struct {
 	Failed    int
 }
 
-// PublishPending publishes up to batchSize unpublished offers — one message each,
+// PublishPending publishes ALL not-yet-published offers — one message each,
 // pausing delay between sends — and marks each successfully sent offer as
-// published. A failure on one offer does not abort the pass.
+// published. Offers are fetched in pages of batchSize until none remain, so a
+// large backlog is fully drained in a single pass. A failure on one offer does
+// not abort the pass; failed offers stay unpublished and are retried next cycle.
 func (p *Publisher) PublishPending(ctx context.Context) (PublishResult, error) {
 	var res PublishResult
 	if p.notifier == nil || !p.notifier.Enabled() {
 		return res, nil
 	}
 
-	offers, err := p.store.ListUnpublished(ctx, p.batchSize)
-	if err != nil {
-		return res, fmt.Errorf("publisher: list unpublished: %w", err)
-	}
-	res.Fetched = len(offers)
-
 	var errs []error
-	for i, o := range offers {
-		if i > 0 {
-			if err := sleep(ctx, p.delay); err != nil {
-				return res, err // ctx cancelled
+	attempted := make(map[int64]bool) // guards against re-fetching offers that failed this pass
+
+	for {
+		offers, err := p.store.ListUnpublished(ctx, p.batchSize)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("publisher: list unpublished: %w", err))
+			break
+		}
+
+		// Skip offers already attempted this pass: a failed send stays unpublished
+		// and would otherwise be fetched again forever.
+		fresh := make([]domain.FlightOffer, 0, len(offers))
+		for _, o := range offers {
+			if !attempted[o.ID] {
+				fresh = append(fresh, o)
 			}
 		}
-
-		if err := p.notifier.Notify(ctx, formatOfferMessage(o)); err != nil {
-			res.Failed++
-			errs = append(errs, fmt.Errorf("offer %d: %w", o.ID, err))
-			continue
+		if len(fresh) == 0 {
+			break
 		}
 
-		if err := p.store.MarkPublished(ctx, o.ID); err != nil {
-			// The message was sent but we failed to record it; it may be re-sent
-			// next cycle. Log and continue (at-least-once delivery).
-			res.Failed++
-			errs = append(errs, fmt.Errorf("mark offer %d: %w", o.ID, err))
-			p.log.Error("publish: mark published failed (message already sent)", "id", o.ID, "error", err)
-			continue
-		}
+		for _, o := range fresh {
+			attempted[o.ID] = true
 
-		res.Published++
-		p.log.Info("offer published",
-			"id", o.ID, "origin", o.Origin, "destination", o.Destination,
-			"date", o.DepartureDate, "price", o.Price)
+			if res.Fetched > 0 { // pause between messages, not before the first
+				if err := sleep(ctx, p.delay); err != nil {
+					return res, err // ctx cancelled
+				}
+			}
+			res.Fetched++
+
+			if err := p.notifier.Notify(ctx, formatOfferMessage(o)); err != nil {
+				res.Failed++
+				errs = append(errs, fmt.Errorf("offer %d: %w", o.ID, err))
+				continue
+			}
+
+			if err := p.store.MarkPublished(ctx, o.ID); err != nil {
+				// The message was sent but we failed to record it; it may be re-sent
+				// next cycle. Log and continue (at-least-once delivery).
+				res.Failed++
+				errs = append(errs, fmt.Errorf("mark offer %d: %w", o.ID, err))
+				p.log.Error("publish: mark published failed (message already sent)", "id", o.ID, "error", err)
+				continue
+			}
+
+			res.Published++
+			p.log.Info("offer published",
+				"id", o.ID, "origin", o.Origin, "destination", o.Destination,
+				"date", o.DepartureDate, "price", o.Price)
+		}
 	}
 
 	return res, errors.Join(errs...)
