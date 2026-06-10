@@ -136,6 +136,7 @@ var airportNames = map[string]string{
 	"MRV": "Минеральные Воды",
 	"SIP": "Симферополь",
 	"CXR": "Нячанг",
+	"NHA": "Нячанг",
 	"SGN": "Хошимин",
 	"HAN": "Ханой",
 }
