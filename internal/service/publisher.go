@@ -135,6 +135,9 @@ var airportNames = map[string]string{
 	"AAQ": "Анапа",
 	"MRV": "Минеральные Воды",
 	"SIP": "Симферополь",
+	"CXR": "Нячанг",
+	"SGN": "Хошимин",
+	"HAN": "Ханой",
 }
 
 // formatOfferMessage renders an offer as an HTML message for Telegram. The long
@@ -234,9 +237,8 @@ func formatAnnounceMessage(origin string, destinations []string, interval time.D
 
 	var b strings.Builder
 	b.WriteString("🔥 <b>Самые выгодные авиабилеты</b>\n\n")
-	fmt.Fprintf(&b, "Следим за лучшими ценами по направлениям:\n✈️ <b>%s → %s</b>\n\n",
+	fmt.Fprintf(&b, "Теперь отслеживаем перелёты по направлениям:\n✈️ <b>%s → %s</b>\n\n",
 		html.EscapeString(airportName(origin)), html.EscapeString(strings.Join(names, ", ")))
-	b.WriteString("ℹ️ <b>Анапа</b> временно недоступна — аэропорт закрыт для полётов.\n\n")
 	fmt.Fprintf(&b, "🗓 Вылеты в ближайшие <b>%d %s</b>\n",
 		collectionWindowDays, plural(collectionWindowDays, "день", "дня", "дней"))
 	fmt.Fprintf(&b, "🔄 Обновляем раз в <b>%s</b>", html.EscapeString(humanizeInterval(interval)))
