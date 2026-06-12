@@ -92,10 +92,10 @@ func main() {
 			Timeout:  cfg.Aviasales.HTTPTimeout,
 		})
 		collector := service.NewCollector(tpClient, offerRepo, log, service.CollectorConfig{
-			Origin:       cfg.Worker.Origin,
+			Origins:      cfg.Worker.Origins,
 			Destinations: cfg.Worker.Destinations,
-			MonthsAhead:  cfg.Worker.MonthsAhead,
 			OneWay:       cfg.Worker.OneWay,
+			Direct:       cfg.Worker.Direct,
 			RequestDelay: cfg.Worker.RequestDelay,
 		})
 
@@ -105,7 +105,7 @@ func main() {
 			publisher = service.NewPublisher(offerRepo, notifier, log,
 				cfg.Worker.PublishBatchSize, cfg.Worker.PublishDelay)
 			// One-time intro message to the channel at startup.
-			if err := publisher.Announce(ctx, cfg.Worker.Origin, cfg.Worker.Destinations, cfg.Worker.Interval); err != nil {
+			if err := publisher.Announce(ctx, cfg.Worker.Origins, cfg.Worker.Destinations, cfg.Worker.Direct, cfg.Worker.Interval); err != nil {
 				log.Warn("telegram startup announcement failed", "error", err)
 			}
 		}
@@ -118,8 +118,9 @@ func main() {
 			w.Run(ctx)
 		}()
 		log.Info("price worker enabled",
-			"origin", cfg.Worker.Origin,
+			"origins", cfg.Worker.Origins,
 			"destinations", cfg.Worker.Destinations,
+			"direct", cfg.Worker.Direct,
 			"interval", cfg.Worker.Interval.String(),
 			"publishing", notifier.Enabled())
 	} else {

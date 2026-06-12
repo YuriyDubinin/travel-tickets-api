@@ -76,10 +76,11 @@ type Aviasales struct {
 type Worker struct {
 	Enabled      bool
 	Interval     time.Duration
-	Origin       string
+	Origins      []string
 	Destinations []string
 	MonthsAhead  int
 	OneWay       bool
+	Direct       bool
 	RequestDelay time.Duration
 
 	// Publishing of collected offers to Telegram, run after each collection pass.
@@ -132,8 +133,8 @@ func Load() (*Config, error) {
 			Currency: getEnv("AVIASALES_CURRENCY", "rub"),
 		},
 		Worker: Worker{
-			Origin:       getEnv("WORKER_ORIGIN", "OVB"),
-			Destinations: parseCSV("WORKER_DESTINATIONS", "AER,KRR,AAQ,MRV"),
+			Origins:      parseCSV("WORKER_ORIGINS", "OVB"),
+			Destinations: parseCSV("WORKER_DESTINATIONS", "CXR,PQC"),
 		},
 		Telegram: Telegram{
 			BotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
@@ -173,6 +174,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if cfg.Worker.OneWay, err = parseBool("WORKER_ONE_WAY", true); err != nil {
+		return nil, err
+	}
+	if cfg.Worker.Direct, err = parseBool("WORKER_DIRECT", true); err != nil {
 		return nil, err
 	}
 

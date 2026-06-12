@@ -117,12 +117,13 @@ func (p *Publisher) PublishPending(ctx context.Context) (PublishResult, error) {
 }
 
 // Announce posts a one-time intro message describing what the bot publishes:
-// the routes, the departure-date window, and how often prices are checked.
-func (p *Publisher) Announce(ctx context.Context, origin string, destinations []string, interval time.Duration) error {
+// the routes (both directions), whether only direct flights are tracked, the
+// departure-date window, and how often prices are checked.
+func (p *Publisher) Announce(ctx context.Context, origins, destinations []string, direct bool, interval time.Duration) error {
 	if p.notifier == nil || !p.notifier.Enabled() {
 		return nil
 	}
-	return p.notifier.Notify(ctx, formatAnnounceMessage(origin, destinations, interval))
+	return p.notifier.Notify(ctx, formatAnnounceMessage(origins, destinations, direct, interval))
 }
 
 // --- message formatting ---
@@ -137,8 +138,13 @@ var airportNames = map[string]string{
 	"SIP": "Симферополь",
 	"CXR": "Нячанг",
 	"NHA": "Нячанг",
+	"PQC": "Фукуок",
 	"SGN": "Хошимин",
 	"HAN": "Ханой",
+	"DAD": "Дананг",
+	"MOW": "Москва",
+	"IKT": "Иркутск",
+	"KJA": "Красноярск",
 }
 
 // formatOfferMessage renders an offer as an HTML message for Telegram. The long
@@ -230,20 +236,34 @@ func groupThousands(n int64) string {
 }
 
 // formatAnnounceMessage renders the one-time startup intro for the channel.
-func formatAnnounceMessage(origin string, destinations []string, interval time.Duration) string {
-	names := make([]string, 0, len(destinations))
-	for _, d := range destinations {
-		names = append(names, airportName(d))
-	}
-
+func formatAnnounceMessage(origins, destinations []string, direct bool, interval time.Duration) string {
 	var b strings.Builder
-	b.WriteString("🔥 <b>Самые выгодные авиабилеты</b>\n\n")
-	fmt.Fprintf(&b, "Теперь отслеживаем перелёты по направлениям:\n✈️ <b>%s → %s</b>\n\n",
-		html.EscapeString(airportName(origin)), html.EscapeString(strings.Join(names, ", ")))
+	b.WriteString("🔥 <b>Лучшие цены на авиабилеты</b>\n\n")
+	b.WriteString("Ищем самые выгодные перелёты в обе стороны и сразу публикуем находки:\n")
+	fmt.Fprintf(&b, "🛫 Откуда: <b>%s</b>\n", html.EscapeString(joinNames(origins)))
+	fmt.Fprintf(&b, "🛬 Куда: <b>%s</b>\n\n", html.EscapeString(joinNames(destinations)))
+	if direct {
+		b.WriteString("🟢 Только прямые рейсы, без пересадок\n")
+	}
 	fmt.Fprintf(&b, "🗓 Вылеты в ближайшие <b>%d %s</b>\n",
 		collectionWindowDays, plural(collectionWindowDays, "день", "дня", "дней"))
 	fmt.Fprintf(&b, "🔄 Обновляем раз в <b>%s</b>", html.EscapeString(humanizeInterval(interval)))
 	return b.String()
+}
+
+// joinNames maps IATA codes to city names and joins them with commas, dropping
+// duplicate names (e.g. CXR and NHA both map to Нячанг).
+func joinNames(codes []string) string {
+	seen := make(map[string]bool)
+	names := make([]string, 0, len(codes))
+	for _, c := range codes {
+		name := airportName(c)
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 // humanizeInterval renders a duration as a short Russian phrase (e.g. "5 минут").

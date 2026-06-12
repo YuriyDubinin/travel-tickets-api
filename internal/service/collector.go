@@ -27,22 +27,23 @@ type OfferStore interface {
 
 // CollectorConfig configures a Collector (built from config.Worker in main).
 type CollectorConfig struct {
-	Origin       string
+	Origins      []string
 	Destinations []string
-	MonthsAhead  int
 	OneWay       bool
+	Direct       bool
 	RequestDelay time.Duration
 }
 
-// Collector fetches prices for the configured routes and upserts them.
+// Collector fetches prices for the configured routes (in both directions) and
+// upserts them.
 type Collector struct {
 	provider     PricesProvider
 	store        OfferStore
 	log          *slog.Logger
-	origin       string
+	origins      []string
 	destinations []string
-	monthsAhead  int
 	oneWay       bool
+	direct       bool
 	reqDelay     time.Duration
 }
 
@@ -52,10 +53,10 @@ func NewCollector(provider PricesProvider, store OfferStore, log *slog.Logger, c
 		provider:     provider,
 		store:        store,
 		log:          log,
-		origin:       cfg.Origin,
+		origins:      cfg.Origins,
 		destinations: cfg.Destinations,
-		monthsAhead:  cfg.MonthsAhead,
 		oneWay:       cfg.OneWay,
+		direct:       cfg.Direct,
 		reqDelay:     cfg.RequestDelay,
 	}
 }
@@ -73,10 +74,29 @@ type CollectResult struct {
 // scans on each pass: from today through today+collectionWindowDays (inclusive).
 const collectionWindowDays = 14
 
-// CollectOnce runs one full collection pass over destinations × the upcoming
-// departure dates (today through today+collectionWindowDays). A failure on one
-// route does not abort the cycle: errors are accumulated and returned joined. An
-// empty result for a date is expected (e.g. OVB→SIP) and is not an error.
+// routePair is a directed origin→destination query.
+type routePair struct {
+	from string
+	to   string
+}
+
+// routes returns every origin/destination combination in BOTH directions:
+// origin→destination ("туда") and destination→origin ("оттуда").
+func (c *Collector) routes() []routePair {
+	pairs := make([]routePair, 0, len(c.origins)*len(c.destinations)*2)
+	for _, o := range c.origins {
+		for _, d := range c.destinations {
+			pairs = append(pairs, routePair{from: o, to: d}) // туда
+			pairs = append(pairs, routePair{from: d, to: o}) // оттуда
+		}
+	}
+	return pairs
+}
+
+// CollectOnce runs one full collection pass over all routes (both directions) ×
+// the upcoming departure dates. A failure on one route does not abort the cycle:
+// errors are accumulated and returned joined. An empty result (e.g. a route with
+// no direct flight on that date) is expected and not an error.
 func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 	var (
 		res  CollectResult
@@ -85,7 +105,7 @@ func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 
 	dates := upcomingDates(time.Now(), collectionWindowDays)
 
-	for _, dest := range c.destinations {
+	for _, r := range c.routes() {
 		for _, date := range dates {
 			// Politeness delay between requests (ctx-aware).
 			if err := sleep(ctx, c.reqDelay); err != nil {
@@ -93,33 +113,33 @@ func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 			}
 
 			offers, err := c.provider.PricesForDates(ctx, travelpayouts.Params{
-				Origin:      c.origin,
-				Destination: dest,
+				Origin:      r.from,
+				Destination: r.to,
 				DepartureAt: date,
 				OneWay:      c.oneWay,
+				Direct:      c.direct,
 				Limit:       100,
 			})
 			if err != nil {
 				res.RoutesFailed++
-				errs = append(errs, fmt.Errorf("%s-%s %s: %w", c.origin, dest, date, err))
+				errs = append(errs, fmt.Errorf("%s-%s %s: %w", r.from, r.to, date, err))
 				c.log.Error("collect route failed",
-					"origin", c.origin, "destination", dest, "date", date, "error", err)
+					"origin", r.from, "destination", r.to, "date", date, "error", err)
 				continue
 			}
 
 			if len(offers) == 0 {
+				// Expected for routes without a (direct) flight on this date.
 				res.RoutesEmpty++
-				c.log.Info("collect route empty (likely no flights)",
-					"origin", c.origin, "destination", dest, "date", date)
 				continue
 			}
 
 			written, err := c.store.UpsertMany(ctx, offers)
 			if err != nil {
 				res.RoutesFailed++
-				errs = append(errs, fmt.Errorf("%s-%s %s upsert: %w", c.origin, dest, date, err))
+				errs = append(errs, fmt.Errorf("%s-%s %s upsert: %w", r.from, r.to, date, err))
 				c.log.Error("collect route upsert failed",
-					"origin", c.origin, "destination", dest, "date", date, "error", err)
+					"origin", r.from, "destination", r.to, "date", date, "error", err)
 				continue
 			}
 
@@ -127,7 +147,7 @@ func (c *Collector) CollectOnce(ctx context.Context) (CollectResult, error) {
 			res.Fetched += len(offers)
 			res.Upserted += written
 			c.log.Info("collect route ok",
-				"origin", c.origin, "destination", dest, "date", date,
+				"origin", r.from, "destination", r.to, "date", date,
 				"fetched", len(offers), "written", written)
 		}
 	}

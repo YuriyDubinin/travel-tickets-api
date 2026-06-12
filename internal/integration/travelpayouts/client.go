@@ -75,6 +75,7 @@ type Params struct {
 	Destination string
 	DepartureAt string // "YYYY-MM" (whole month) or "YYYY-MM-DD"
 	OneWay      bool
+	Direct      bool
 	Limit       int
 }
 
@@ -122,7 +123,7 @@ func (c *Client) PricesForDates(ctx context.Context, params Params) ([]domain.Fl
 	q.Set("departure_at", params.DepartureAt)
 	q.Set("currency", c.currency)
 	q.Set("sorting", "price")
-	q.Set("direct", "false")
+	q.Set("direct", strconv.FormatBool(params.Direct))
 	q.Set("one_way", strconv.FormatBool(params.OneWay))
 	q.Set("limit", strconv.Itoa(limit))
 	q.Set("page", "1")
