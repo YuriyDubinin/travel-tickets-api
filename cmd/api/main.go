@@ -103,9 +103,9 @@ func main() {
 		var publisher *service.Publisher
 		if notifier.Enabled() {
 			publisher = service.NewPublisher(offerRepo, notifier, log,
-				cfg.Worker.PublishBatchSize, cfg.Worker.PublishDelay)
+				cfg.Worker.PublishBatchSize, cfg.Worker.PublishDelay, cfg.Worker.MaxPrice)
 			// One-time intro message to the channel at startup.
-			if err := publisher.Announce(ctx, cfg.Worker.Origins, cfg.Worker.Destinations, cfg.Worker.Direct, cfg.Worker.Interval); err != nil {
+			if err := publisher.Announce(ctx, cfg.Worker.Origins, cfg.Worker.Destinations, cfg.Worker.Direct, cfg.Worker.MaxPrice, cfg.Worker.Interval); err != nil {
 				log.Warn("telegram startup announcement failed", "error", err)
 			}
 		}

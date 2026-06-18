@@ -144,21 +144,26 @@ SELECT id, origin, destination,
        one_way, source, collected_at
 FROM flight_offers
 WHERE published IS NOT TRUE
+  AND ($1 = 0 OR price <= $1)
 ORDER BY collected_at, price
-LIMIT $1
+LIMIT $2
 `
 
 // ListUnpublished returns offers not yet published (published is false or NULL),
-// oldest first. A non-positive limit falls back to the default.
-func (r *FlightOfferRepository) ListUnpublished(ctx context.Context, limit int) ([]domain.FlightOffer, error) {
+// oldest first. Offers with price above maxPrice are excluded (maxPrice <= 0
+// means no limit). A non-positive limit falls back to the default.
+func (r *FlightOfferRepository) ListUnpublished(ctx context.Context, maxPrice int64, limit int) ([]domain.FlightOffer, error) {
 	if limit <= 0 {
 		limit = defaultOfferLimit
 	}
 	if limit > maxOfferLimit {
 		limit = maxOfferLimit
 	}
+	if maxPrice < 0 {
+		maxPrice = 0
+	}
 
-	rows, err := r.pool.Query(ctx, listUnpublishedSQL, limit)
+	rows, err := r.pool.Query(ctx, listUnpublishedSQL, maxPrice, limit)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list unpublished offers: %w", err)
 	}

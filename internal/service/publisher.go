@@ -16,7 +16,7 @@ import (
 // OfferPublishStore lists unpublished offers and marks them published.
 // Implemented by the postgres FlightOfferRepository.
 type OfferPublishStore interface {
-	ListUnpublished(ctx context.Context, limit int) ([]domain.FlightOffer, error)
+	ListUnpublished(ctx context.Context, maxPrice int64, limit int) ([]domain.FlightOffer, error)
 	MarkPublished(ctx context.Context, id int64) error
 }
 
@@ -28,16 +28,19 @@ type Publisher struct {
 	log       *slog.Logger
 	batchSize int
 	delay     time.Duration
+	maxPrice  int64
 }
 
-// NewPublisher constructs a Publisher.
-func NewPublisher(store OfferPublishStore, notifier *Notifier, log *slog.Logger, batchSize int, delay time.Duration) *Publisher {
+// NewPublisher constructs a Publisher. maxPrice caps the price of published
+// offers (0 = no limit).
+func NewPublisher(store OfferPublishStore, notifier *Notifier, log *slog.Logger, batchSize int, delay time.Duration, maxPrice int64) *Publisher {
 	return &Publisher{
 		store:     store,
 		notifier:  notifier,
 		log:       log,
 		batchSize: batchSize,
 		delay:     delay,
+		maxPrice:  maxPrice,
 	}
 }
 
@@ -63,7 +66,7 @@ func (p *Publisher) PublishPending(ctx context.Context) (PublishResult, error) {
 	attempted := make(map[int64]bool) // guards against re-fetching offers that failed this pass
 
 	for {
-		offers, err := p.store.ListUnpublished(ctx, p.batchSize)
+		offers, err := p.store.ListUnpublished(ctx, p.maxPrice, p.batchSize)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("publisher: list unpublished: %w", err))
 			break
@@ -119,11 +122,11 @@ func (p *Publisher) PublishPending(ctx context.Context) (PublishResult, error) {
 // Announce posts a one-time intro message describing what the bot publishes:
 // the routes (both directions), whether only direct flights are tracked, the
 // departure-date window, and how often prices are checked.
-func (p *Publisher) Announce(ctx context.Context, origins, destinations []string, direct bool, interval time.Duration) error {
+func (p *Publisher) Announce(ctx context.Context, origins, destinations []string, direct bool, maxPrice int64, interval time.Duration) error {
 	if p.notifier == nil || !p.notifier.Enabled() {
 		return nil
 	}
-	return p.notifier.Notify(ctx, formatAnnounceMessage(origins, destinations, direct, interval))
+	return p.notifier.Notify(ctx, formatAnnounceMessage(origins, destinations, direct, maxPrice, interval))
 }
 
 // --- message formatting ---
@@ -236,15 +239,21 @@ func groupThousands(n int64) string {
 }
 
 // formatAnnounceMessage renders the one-time startup intro for the channel.
-func formatAnnounceMessage(origins, destinations []string, direct bool, interval time.Duration) string {
+func formatAnnounceMessage(origins, destinations []string, direct bool, maxPrice int64, interval time.Duration) string {
 	var b strings.Builder
 	b.WriteString("🔥 <b>Лучшие цены на авиабилеты</b>\n\n")
-	b.WriteString("Ищем самые выгодные перелёты в обе стороны и сразу публикуем находки:\n")
-	fmt.Fprintf(&b, "🛫 Откуда: <b>%s</b>\n", html.EscapeString(joinNames(origins)))
-	fmt.Fprintf(&b, "🛬 Куда: <b>%s</b>\n\n", html.EscapeString(joinNames(destinations)))
+
+	intro := "Публикуем билеты в одну сторону"
 	if direct {
-		b.WriteString("🟢 Только прямые рейсы, без пересадок\n")
+		intro = "Публикуем <b>прямые</b> билеты в одну сторону"
 	}
+	if maxPrice > 0 {
+		intro += fmt.Sprintf(" до <b>%s</b>", html.EscapeString(formatPrice(maxPrice, "RUB")))
+	}
+	b.WriteString(intro + ":\n")
+
+	fmt.Fprintf(&b, "✈️ <b>%s → %s</b>\n\n",
+		html.EscapeString(joinNames(origins)), html.EscapeString(joinNames(destinations)))
 	fmt.Fprintf(&b, "🗓 Вылеты в ближайшие <b>%d %s</b>\n",
 		collectionWindowDays, plural(collectionWindowDays, "день", "дня", "дней"))
 	fmt.Fprintf(&b, "🔄 Обновляем раз в <b>%s</b>", html.EscapeString(humanizeInterval(interval)))

@@ -86,6 +86,7 @@ type Worker struct {
 	// Publishing of collected offers to Telegram, run after each collection pass.
 	PublishBatchSize int           // max offers published per cycle
 	PublishDelay     time.Duration // pause between individual messages (anti-flood)
+	MaxPrice         int64         // publish only offers with price <= MaxPrice (0 = no limit)
 }
 
 // Telegram holds settings for the Telegram bot that posts to a channel. When
@@ -134,7 +135,7 @@ func Load() (*Config, error) {
 		},
 		Worker: Worker{
 			Origins:      parseCSV("WORKER_ORIGINS", "OVB"),
-			Destinations: parseCSV("WORKER_DESTINATIONS", "CXR,PQC"),
+			Destinations: parseCSV("WORKER_DESTINATIONS", "CXR,DAD"),
 		},
 		Telegram: Telegram{
 			BotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
@@ -195,6 +196,12 @@ func Load() (*Config, error) {
 	if cfg.Worker.PublishDelay, err = parseDuration("WORKER_PUBLISH_DELAY", "3s"); err != nil {
 		return nil, err
 	}
+
+	maxPrice, err := parseInt("WORKER_MAX_PRICE", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Worker.MaxPrice = int64(maxPrice)
 
 	if cfg.Telegram.HTTPTimeout, err = parseDuration("TELEGRAM_HTTP_TIMEOUT", "10s"); err != nil {
 		return nil, err
