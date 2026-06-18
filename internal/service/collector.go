@@ -80,12 +80,14 @@ type routePair struct {
 	to   string
 }
 
-// routes returns every origin→destination combination (outbound only, "туда").
+// routes returns every origin/destination combination in BOTH directions:
+// origin→destination ("туда") and destination→origin ("оттуда").
 func (c *Collector) routes() []routePair {
-	pairs := make([]routePair, 0, len(c.origins)*len(c.destinations))
+	pairs := make([]routePair, 0, len(c.origins)*len(c.destinations)*2)
 	for _, o := range c.origins {
 		for _, d := range c.destinations {
-			pairs = append(pairs, routePair{from: o, to: d})
+			pairs = append(pairs, routePair{from: o, to: d}) // туда
+			pairs = append(pairs, routePair{from: d, to: o}) // оттуда
 		}
 	}
 	return pairs

@@ -243,16 +243,16 @@ func formatAnnounceMessage(origins, destinations []string, direct bool, maxPrice
 	var b strings.Builder
 	b.WriteString("🔥 <b>Лучшие цены на авиабилеты</b>\n\n")
 
-	intro := "Публикуем билеты в одну сторону"
+	intro := "Публикуем билеты в обе стороны"
 	if direct {
-		intro = "Публикуем <b>прямые</b> билеты в одну сторону"
+		intro = "Публикуем <b>прямые</b> билеты в обе стороны"
 	}
 	if maxPrice > 0 {
 		intro += fmt.Sprintf(" до <b>%s</b>", html.EscapeString(formatPrice(maxPrice, "RUB")))
 	}
 	b.WriteString(intro + ":\n")
 
-	fmt.Fprintf(&b, "✈️ <b>%s → %s</b>\n\n",
+	fmt.Fprintf(&b, "✈️ <b>%s ↔ %s</b>\n\n",
 		html.EscapeString(joinNames(origins)), html.EscapeString(joinNames(destinations)))
 	fmt.Fprintf(&b, "🗓 Вылеты в ближайшие <b>%d %s</b>\n",
 		collectionWindowDays, plural(collectionWindowDays, "день", "дня", "дней"))
